@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Recepción — Sistema Moteles</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1 id="motel">🛎️ Recepción</h1>
+  <span class="chip" id="st-libres">libres: –</span>
+  <span class="chip" id="st-ocupadas">ocupadas: –</span>
+  <span class="chip" id="st-recaud">en curso: –</span>
+  <span class="chip" id="st-pedidos">pedidos: –</span>
+  <button class="btn warn" id="gate">🚧 Abrir barrera</button>
+  <a class="btn" href="/kitchen">🍳 Cocina</a>
+  <a class="btn" href="/dashboard">📊 Panel</a>
+</header>
+
+<main>
+  <div class="grid" id="cabins"></div>
+</main>
+
+<!-- Modal check-in -->
+<div class="modal" id="modal-checkin" hidden>
+  <div class="box">
+    <h3 id="ci-title">Registrar ingreso</h3>
+    <label>Tiempo contratado</label>
+    <select id="ci-dur"></select>
+    <label>Patente del vehículo (opcional)</label>
+    <input type="text" id="ci-plate" placeholder="ABCD12" maxlength="10">
+    <p class="mut small" id="ci-note"></p>
+    <div class="row" style="margin-top:14px;justify-content:flex-end">
+      <button class="btn" id="ci-cancel">Cancelar</button>
+      <button class="btn ok" id="ci-go">🖨️ Imprimir ticket + abrir barrera</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal QR -->
+<div class="modal" id="modal-qr" hidden>
+  <div class="box" style="text-align:center">
+    <h3 id="qr-title">Ticket generado</h3>
+    <div class="qrbox" id="qrbox"></div>
+    <p id="qr-info" class="small mut"></p>
+    <p class="small" id="qr-print"></p>
+    <div class="row" style="justify-content:center;margin-top:12px">
+      <button class="btn" id="qr-reprint">🖨️ Reimprimir</button>
+      <button class="btn acc" id="qr-close">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="modal-key" hidden>
+  <div class="box">
+    <h3>🔐 Acceso del personal</h3>
+    <p class="mut small">Clave de panel configurada en <code>config.json</code> →
+      <code>panel_key</code>. Por defecto: <b>CAMBIAR-CLAVE-PANEL</b></p>
+    <p class="small" id="key-msg" style="color:var(--warn)"></p>
+    <input type="password" id="key-input" placeholder="Clave de panel" autocomplete="current-password">
+    <div class="row" style="justify-content:flex-end;margin-top:12px">
+      <button class="btn acc" id="key-go">Entrar</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="/vendor/qrcode.js"></script>
+<script>
+const PK_KEY = 'motel_panel_key';
+let PK = localStorage.getItem(PK_KEY) || '';
+let state = null, ciCabin = null, lastQr = null;
+
+const fmt$ = v => '$ ' + Math.round(v).toLocaleString('es-CL');
+const hhmm = s => (s || '').slice(11, 16);
+function minsLeft(n) {
+  if (n < 0) return 'vencido ' + Math.abs(n) + 'm';
+  const h = Math.floor(n / 60), m = n % 60;
+  return (h ? h + 'h ' : '') + m + 'm';
+}
+function toast(msg, bad) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.background = bad ? '#3a1414' : '#12351f';
+  t.hidden = false;
+  setTimeout(() => t.hidden = true, 3500);
+}
+function showKey(msg) {
+  document.getElementById('key-msg').textContent = msg || '';
+  const m = document.getElementById('modal-key');
+  if (m.hidden) { m.hidden = false; document.getElementById('key-input').focus(); }
+}
+async function api(path, body) {
+  const opt = { method: body ? 'POST' : 'GET', headers: { 'X-Panel-Key': PK } };
+  if (body) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
+  const r = await fetch(path, opt);
+  if (r.status === 401) { showKey('Clave incorrecta o no ingresada.'); return { ok: false, error: 'sin clave de panel' }; }
+  return r.json().catch(() => ({}));
+}
+document.getElementById('key-go').onclick = () => {
+  PK = document.getElementById('key-input').value.trim();
+  localStorage.setItem(PK_KEY, PK);
+  document.getElementById('modal-key').hidden = true;
+  refresh();
+};
+document.getElementById('key-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('key-go').click();
+});
+async function init() {
+  let req = false;
+  try { req = !!(await (await fetch('/api/config')).json()).require_keys; } catch (e) {}
+  if (req && !PK) showKey('Escribe la clave de panel para entrar.');
+  refresh();
+}
+
+/* ---------------- render ---------------- */
+function render() {
+  if (!state || !state.ok) {
+    document.getElementById('cabins').innerHTML =
+      '<div class="card">Sin acceso al servidor. Recarga la página.</div>';
+    return;
+  }
+  document.getElementById('motel').textContent = '🛎️ ' + state.motel + ' — Recepción';
+  document.getElementById('st-libres').textContent = 'libres: ' + state.totals.libres;
+  document.getElementById('st-ocupadas').textContent = 'ocupadas: ' + state.totals.ocupadas;
+  document.getElementById('st-recaud').textContent = 'en curso: ' + fmt$(state.totals.recaudacion);
+  document.getElementById('st-pedidos').textContent = 'pedidos: ' + state.totals.pedidos_pendientes;
+
+  const el = document.getElementById('cabins');
+  el.innerHTML = '';
+  for (const c of state.cabins) {
+    const div = document.createElement('div');
+    div.className = 'card';
+    let html = `<div class="row"><h3 style="flex:1;margin:0">${c.name}</h3>
+      <span class="badge ${c.state}">${c.state}</span></div>`;
+    if (c.state === 'ocupada' && c.ticket) {
+      const t = c.ticket;
+      const rem = c.remaining_min;
+      const warn = rem <= 15 ? 'color:var(--warn)' : '';
+      html += `<p class="small mut">desde ${hhmm(t.issued_at)} · ticket #${t.id}
+        · entradas: ${t.entry_count}${t.plate ? ' · ' + t.plate : ''}</p>
+        <p><span class="big" style="${warn}">${minsLeft(rem)}</span>
+        <span class="mut small">restantes</span></p>
+        <p class="small">Base ${fmt$(t.price)} + servicios ${fmt$(c.charges)}
+        = <b>${fmt$(c.total)}</b></p>
+        <div class="row">
+          <button class="btn acc" data-act="open" data-id="${c.id}">🔓 Abrir</button>
+          <button class="btn" data-act="reprint" data-id="${c.id}">🖨️ Ticket</button>
+          <button class="btn warn" data-act="checkout" data-id="${c.id}">💵 Cobrar salida</button>
+        </div>`;
+    } else {
+      html += `<p class="small mut">3h ${fmt$(c.prices['180'])} ·
+        6h ${fmt$(c.prices['360'])} · 12h ${fmt$(c.prices['720'])}</p>
+        <div class="row">
+          <button class="btn ok bigbtn" data-act="checkin" data-id="${c.id}">
+            🚗 Registrar ingreso</button>
+        </div>`;
+    }
+    div.innerHTML = html;
+    el.appendChild(div);
+  }
+}
+
+async function refresh() {
+  state = await api('/api/state');
+  render();
+}
+
+/* ---------------- acciones ---------------- */
+document.getElementById('cabins').addEventListener('click', async ev => {
+  const btn = ev.target.closest('button[data-act]');
+  if (!btn) return;
+  const id = +btn.dataset.id;
+  const cabin = state.cabins.find(c => c.id === id);
+  if (btn.dataset.act === 'checkin') openCheckin(cabin);
+  if (btn.dataset.act === 'open') {
+    btn.disabled = true;
+    const r = await api('/api/panel/open', { cabin_id: id });
+    toast(r.ok ? 'Apertura enviada: ' + (r.unlock.detail || '') : 'Error: ' + (r.error || ''), !r.ok);
+    btn.disabled = false;
+  }
+  if (btn.dataset.act === 'reprint') {
+    const r = await api('/api/reprint', { cabin_id: id });
+    if (r.ok) showQr({ qr_payload: r.qr_payload, token_short: r.token_short,
+      print: r.print, ticket: { id: '', cabin_name: cabin.name,
+      valid_until: '', price: 0 } }, 'Reimpresión ' + cabin.name);
+    else toast('Error: ' + r.error, true);
+  }
+  if (btn.dataset.act === 'checkout') {
+    if (!confirm('¿Cobrar y liberar ' + cabin.name + '?\nTotal: ' + fmt$(cabin.total))) return;
+    const r = await api('/api/checkout', { cabin_id: id });
+    if (r.ok) toast('Cobrado ' + fmt$(r.total) + ' (base ' + fmt$(r.base) +
+      ' + servicios ' + fmt$(r.charges) + ')');
+    else toast('Error: ' + r.error, true);
+    refresh();
+  }
+});
+
+/* ---------------- check-in ---------------- */
+function openCheckin(cabin) {
+  ciCabin = cabin;
+  document.getElementById('ci-title').textContent = 'Registrar ingreso — ' + cabin.name;
+  const sel = document.getElementById('ci-dur');
+  sel.innerHTML = '';
+  const opts = [['180', '3 horas'], ['360', '6 horas'], ['720', '12 horas']];
+  for (const [k, label] of opts) {
+    const o = document.createElement('option');
+    o.value = k;
+    o.textContent = label + ' — ' + fmt$(cabin.prices[k]);
+    sel.appendChild(o);
+  }
+  document.getElementById('ci-plate').value = '';
+  document.getElementById('ci-note').textContent =
+    'Al confirmar: se imprime el ticket QR, se abre la barrera y la cabaña queda ocupada.';
+  document.getElementById('modal-checkin').hidden = false;
+}
+document.getElementById('ci-cancel').onclick = () =>
+  document.getElementById('modal-checkin').hidden = true;
+document.getElementById('ci-go').onclick = async () => {
+  const btn = document.getElementById('ci-go');
+  btn.disabled = true;
+  const r = await api('/api/checkin', {
+    cabin_id: ciCabin.id,
+    duration_min: +document.getElementById('ci-dur').value,
+    plate: document.getElementById('ci-plate').value.trim(),
+  });
+  btn.disabled = false;
+  if (r.ok) {
+    document.getElementById('modal-checkin').hidden = true;
+    showQr(r, 'Ticket ' + r.ticket.cabin_name + ' — #' + r.ticket.id);
+    toast('Ingreso registrado. Barrera: ' + (r.gate && r.gate.detail || '').slice(0, 60));
+    refresh();
+  } else {
+    toast('Error: ' + (r.error || 'no se pudo registrar'), true);
+  }
+};
+
+/* ---------------- QR ---------------- */
+function showQr(res, title) {
+  lastQr = res;
+  document.getElementById('qr-title').textContent = title || 'Ticket';
+  const box = document.getElementById('qrbox');
+  box.innerHTML = '';
+  if (typeof qrcode === 'undefined') {
+    box.textContent = res.qr_payload;
+  } else {
+    const qr = qrcode(0, 'M');
+    qr.addData(res.qr_payload);
+    qr.make();
+    box.innerHTML = qr.createImgTag(10, 20);
+  }
+  const t = res.ticket || {};
+  document.getElementById('qr-info').textContent =
+    (t.cabin_name ? t.cabin_name + ' · ' : '') +
+    (t.valid_until ? 'válido hasta ' + hhmm(t.valid_until) + ' · ' : '') +
+    'código manual: ' + (res.token_short || '');
+  const p = res.print || {};
+  document.getElementById('qr-print').textContent =
+    'Impresora (' + (p.mode || '?') + '): ' + (p.detail || '');
+  document.getElementById('modal-qr').hidden = false;
+}
+document.getElementById('qr-close').onclick = () =>
+  document.getElementById('modal-qr').hidden = true;
+document.getElementById('qr-reprint').onclick = async () => {
+  if (!state) return;
+  const t = lastQr && lastQr.ticket || {};
+  const cabin = state.cabins.find(c => c.name === t.cabin_name) ||
+                state.cabins.find(c => c.state === 'ocupada');
+  if (!cabin) return;
+  const r = await api('/api/reprint', { cabin_id: cabin.id });
+  if (r.ok) showQr({ qr_payload: r.qr_payload, token_short: r.token_short,
+    print: r.print, ticket: t }, 'Reimpresión ' + cabin.name);
+  else toast('Error: ' + r.error, true);
+};
+
+/* ---------------- barrera + loop ---------------- */
+document.getElementById('gate').onclick = async () => {
+  const r = await api('/api/gate/open', {});
+  toast(r.ok ? 'Barrera: ' + (r.unlock.detail || '') : 'Error: ' + (r.error || ''), !r.ok);
+};
+
+init();
+setInterval(refresh, 2500);
+</script>
+</body>
+</html>

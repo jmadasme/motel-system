@@ -1,0 +1,23 @@
+# Servicio systemd para el servidor central del sistema de moteles.
+# Instalar (ajustar User y rutas si es necesario):
+#   sudo cp deploy/motel.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now motel
+
+[Unit]
+Description=Servidor central Sistema Moteles
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jma
+WorkingDirectory=/home/jma/Documents/Proyect/motel-system
+ExecStart=/usr/bin/python3 server/app.py
+Restart=always
+RestartSec=3
+StandardOutput=append:/home/jma/Documents/Proyect/motel-system/data/server.log
+StandardError=append:/home/jma/Documents/Proyect/motel-system/data/server.log
+
+[Install]
+WantedBy=multi-user.target

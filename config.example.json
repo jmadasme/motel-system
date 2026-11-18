@@ -1,0 +1,12 @@
+{
+  "panel_key": "x",
+  "require_keys": false,
+  "https": true,
+  "printer": {
+    "mode": "file"
+  },
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080
+  }
+}

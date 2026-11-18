@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cabana — Sistema Moteles</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div style="background:linear-gradient(90deg,#7c2d12,#b45309);color:#fff;padding:7px 14px;font-size:13px;text-align:center;position:sticky;top:0;z-index:99">
+🖼️ <b>MAQUETA</b> — pantalla de ejemplo con datos ficticios de "Motel Los Robles" (23:05, plena operación). No está conectada a la base real.
+</div>
+<script src="mock.js"></script>
+<header>
+  <h1 id="title">🍽️ Cabana</h1>
+  <span class="chip" id="state">–</span>
+  <span class="chip" id="consumo"></span>
+</header>
+<main>
+  <div class="card" id="err" hidden></div>
+  <div id="catalog"></div>
+
+  <h3 style="margin-top:18px">Tus pedidos</h3>
+  <div id="orders" class="grid"></div>
+</main>
+
+<div class="cartbar">
+  <div style="flex:1">
+    <span class="mut small">Total del pedido</span><br>
+    <span class="big" id="cart-total">$ 0</span>
+  </div>
+  <button class="btn ok bigbtn" id="send">📨 Enviar a cocina</button>
+  <button class="btn warn" id="exit" title="Abre la chapa 5 segundos">🚪 Abrir para salir (5 s)</button>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const P = new URLSearchParams(location.search);
+const CAB = +(P.get('cab') || 0);
+const K = P.get('k') || '';
+let products = [], cart = {}, cabinet = null;
+
+const fmt$ = v => '$ ' + Math.round(v).toLocaleString('es-CL');
+const hhmm = s => (s || '').slice(11, 16);
+function toast(msg, bad) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.background = bad ? '#3a1414' : '#12351f';
+  t.hidden = false;
+  setTimeout(() => t.hidden = true, 4000);
+}
+function fatal(msg) {
+  const e = document.getElementById('err');
+  e.hidden = false;
+  e.innerHTML = '<b>Configuración incompleta.</b><br>' + msg;
+}
+if (!CAB) fatal('Falta <code>?cab=N</code> en la URL.');
+
+const STATUS_LABEL = { nuevo: 'recibido', preparando: 'en preparación',
+  listo: 'listo', entregado: 'entregado', cancelado: 'cancelado' };
+
+async function loadProducts() {
+  const r = await fetch('/api/products');
+  const j = await r.json();
+  products = j.products || [];
+  renderCatalog();
+}
+
+function renderCatalog() {
+  const cont = document.getElementById('catalog');
+  cont.innerHTML = '';
+  const cats = {};
+  for (const p of products) (cats[p.category] = cats[p.category] || []).push(p);
+  for (const [cat, items] of Object.entries(cats)) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `<h3 style="text-transform:capitalize">${cat}</h3>` +
+      items.map(p => `
+        <div class="row" style="justify-content:space-between;padding:7px 0;
+             border-bottom:1px solid #1d2532">
+          <div>${p.name}<br><span class="mut small">${fmt$(p.price)}</span></div>
+          <div class="row">
+            <button class="btn" data-del="${p.id}">−</button>
+            <span class="big" id="q${p.id}" style="min-width:22px;text-align:center">0</span>
+            <button class="btn" data-add="${p.id}">+</button>
+          </div>
+        </div>`).join('');
+    cont.appendChild(card);
+  }
+}
+
+document.getElementById('catalog').addEventListener('click', ev => {
+  const add = ev.target.closest('[data-add]');
+  const del = ev.target.closest('[data-del]');
+  if (add) changeQty(+add.dataset.add, 1);
+  if (del) changeQty(+del.dataset.del, -1);
+});
+function changeQty(id, d) {
+  cart[id] = Math.max(0, (cart[id] || 0) + d);
+  if (!cart[id]) delete cart[id];
+  document.getElementById('q' + id).textContent = cart[id] || 0;
+  renderCart();
+}
+function renderCart() {
+  let total = 0, count = 0;
+  for (const [id, q] of Object.entries(cart)) {
+    const p = products.find(x => x.id === +id);
+    if (p) { total += p.price * q; count += q; }
+  }
+  document.getElementById('cart-total').textContent = fmt$(total);
+  document.getElementById('send').disabled = !count;
+}
+
+document.getElementById('send').onclick = async () => {
+  const btn = document.getElementById('send');
+  btn.disabled = true;
+  const items = Object.entries(cart).map(([id, qty]) =>
+    ({ product_id: +id, qty }));
+  const r = await fetch('/api/orders', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cab: CAB, k: K, items }),
+  });
+  const j = await r.json();
+  if (j.ok) {
+    toast('Pedido enviado a cocina — ' + fmt$(j.total));
+    cart = {};
+    document.querySelectorAll('[id^=q]').forEach(e => e.textContent = '0');
+    renderCart();
+    refreshState();
+  } else {
+    toast('Error: ' + (j.error || 'no se pudo enviar'), true);
+  }
+  btn.disabled = false;
+};
+
+document.getElementById('exit').onclick = async () => {
+  const r = await fetch('/api/exit_request', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cab: CAB, k: K }),
+  });
+  const j = await r.json();
+  toast(j.ok ? 'Puerta abierta 5 segundos' : 'Error: ' + (j.error || ''), !j.ok);
+};
+
+async function refreshState() {
+  const r = await fetch(`/api/cabin_state?cab=${CAB}&k=${encodeURIComponent(K)}`);
+  const j = await r.json();
+  if (!j.ok) { if (!cabinet) fatal(j.error || 'clave inválida'); return; }
+  cabinet = j;
+  document.getElementById('title').textContent = '🍽️ ' + j.cabin.name;
+  const st = document.getElementById('state');
+  st.textContent = j.state;
+  st.className = 'chip';
+  document.getElementById('consumo').textContent =
+    j.state === 'ocupada' ? 'consumo: ' + fmt$(j.charges) : '';
+  renderOrders();
+}
+
+function renderOrders() {
+  const el = document.getElementById('orders');
+  el.innerHTML = '';
+  const orders = (cabinet && cabinet.orders) || [];
+  if (!orders.length) {
+    el.innerHTML = '<p class="mut small">Todavía no hay pedidos.</p>';
+    return;
+  }
+  for (const o of orders) {
+    const div = document.createElement('div');
+    div.className = 'card';
+    div.innerHTML = `
+      <div class="row"><b style="flex:1">Pedido #${o.id}</b>
+        <span class="badge ${o.status}">${STATUS_LABEL[o.status] || o.status}</span></div>
+      <p class="small mut">${hhmm(o.created_at)}</p>
+      <p class="small">${o.items.map(i => i.qty + '× ' + i.name).join('<br>')}</p>
+      <b>${fmt$(o.total)}</b>`;
+    el.appendChild(div);
+  }
+}
+
+loadProducts();
+refreshState();
+setInterval(refreshState, 5000);
+</script>
+</body>
+</html>

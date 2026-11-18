@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Personal del motel — Sistema Moteles</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  .staff-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px}
+  .staff-card{text-align:center}
+  .staff-card h3{margin:0 0 2px}
+  .staff-card .role{color:var(--mut);font-size:13px;margin-bottom:10px}
+  .staff-card .qrbox{margin:0 auto 10px}
+  .staff-card .code{font-family:ui-monospace,monospace;font-size:15px;font-weight:700;
+    letter-spacing:.08em}
+  .staff-card .payload{font-family:ui-monospace,monospace;font-size:11px;
+    color:var(--mut);word-break:break-all;margin-top:2px}
+  .notice{border-color:#6b521f;background:#2a2110;color:#ffe7b8}
+  @media print{
+    header,.no-print,.notice{display:none!important}
+    body{background:#fff;color:#000}
+    main{padding:0;max-width:none}
+    .staff-grid{grid-template-columns:1fr 1fr;gap:10px}
+    .staff-card{background:#fff;color:#000;border:1px solid #999;break-inside:avoid}
+    .staff-card .role,.staff-card .payload{color:#444}
+    .qrbox{background:#fff}
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>👥 Personal del motel</h1>
+  <a class="btn" href="/dashboard">📊 Panel</a>
+  <a class="btn" href="/recepcion">🛎️ Recepción</a>
+  <button class="btn acc no-print" onclick="window.print()">🖨️ Imprimir</button>
+</header>
+<main>
+  <div class="card notice" style="margin-bottom:14px">
+    <b>⚠️ Solo para personal.</b> Estos códigos abren cualquier cabaña en
+    cualquier momento. Cada uso queda registrado en los eventos del panel.
+  </div>
+  <div class="card" id="msg" hidden></div>
+  <div class="staff-grid" id="staff"></div>
+</main>
+
+<script src="/vendor/qrcode.js"></script>
+<script>
+(async () => {
+  const box = document.getElementById('staff');
+  const msg = document.getElementById('msg');
+  function showMsg(text) {
+    msg.hidden = false;
+    msg.textContent = text;
+  }
+  try {
+    const r = await fetch('/api/staff');
+    if (!r.ok) {
+      showMsg(r.status === 403
+        ? 'Esta página solo se puede abrir desde la red local del motel.'
+        : 'No se pudo cargar el personal (error ' + r.status + ').');
+      return;
+    }
+    const data = await r.json();
+    if (!data.staff || !data.staff.length) {
+      showMsg('No hay códigos de personal activos.');
+      return;
+    }
+    for (const s of data.staff) {
+      const qr = qrcode(0, 'M');
+      qr.addData(s.payload);
+      qr.make();
+      const card = document.createElement('div');
+      card.className = 'card staff-card';
+      card.innerHTML = `
+        <h3></h3>
+        <div class="role"></div>
+        <div class="qrbox">${qr.createImgTag(8, 16)}</div>
+        <div class="code"></div>
+        <div class="payload"></div>`;
+      card.querySelector('h3').textContent = s.name;
+      card.querySelector('.role').textContent = s.role;
+      card.querySelector('.code').textContent = 'Código: ' + s.short;
+      card.querySelector('.payload').textContent = s.payload;
+      const img = card.querySelector('img');
+      if (img) img.alt = 'QR de ' + s.name;
+      box.appendChild(card);
+    }
+  } catch (e) {
+    showMsg('No se pudo cargar el personal: ' + e.message);
+  }
+})();
+</script>
+</body>
+</html>

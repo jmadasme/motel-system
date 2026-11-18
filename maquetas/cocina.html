@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cocina — Sistema Moteles</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div style="background:linear-gradient(90deg,#7c2d12,#b45309);color:#fff;padding:7px 14px;font-size:13px;text-align:center;position:sticky;top:0;z-index:99">
+🖼️ <b>MAQUETA</b> — pantalla de ejemplo con datos ficticios de "Motel Los Robles" (23:05, plena operación). No está conectada a la base real.
+</div>
+<script src="mock.js"></script>
+<header>
+  <h1>👨‍🍳 Cocina</h1>
+  <span class="chip" id="count">pedidos: –</span>
+  <a class="btn" href="recepcion.html">🛎️ Recepción</a>
+  <a class="btn" href="panel.html">📊 Panel</a>
+</header>
+<main>
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr))">
+    <div><h3>🔔 Recibidos <span class="chip" id="c-nuevo">0</span></h3>
+      <div id="col-nuevo"></div></div>
+    <div><h3>👨‍🍳 En preparación <span class="chip" id="c-preparando">0</span></h3>
+      <div id="col-preparando"></div></div>
+    <div><h3>✅ Listos <span class="chip" id="c-listo">0</span></h3>
+      <div id="col-listo"></div></div>
+  </div>
+  <h3 style="margin-top:18px">Entregados recientes</h3>
+  <div id="entregados" class="row"></div>
+</main>
+<div class="modal" id="modal-key" hidden>
+  <div class="box">
+    <h3>🔐 Acceso del personal</h3>
+    <p class="mut small">Clave de panel configurada en <code>config.json</code> →
+      <code>panel_key</code>. Por defecto: <b>CAMBIAR-CLAVE-PANEL</b></p>
+    <p class="small" id="key-msg" style="color:var(--warn)"></p>
+    <input type="password" id="key-input" placeholder="Clave de panel" autocomplete="current-password">
+    <div class="row" style="justify-content:flex-end;margin-top:12px">
+      <button class="btn acc" id="key-go">Entrar</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const PK_KEY = 'motel_panel_key';
+let PK = localStorage.getItem(PK_KEY) || '';
+let prevNuevos = null;
+const fmt$ = v => '$ ' + Math.round(v).toLocaleString('es-CL');
+const hhmm = s => (s || '').slice(11, 16);
+const NEXT = { nuevo: 'preparando', preparando: 'listo', listo: 'entregado' };
+const NEXT_LABEL = { nuevo: '👨‍🍳 Preparar', preparando: '✅ Listo', listo: '📦 Entregado' };
+
+function beep() {
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.value = 660; g.gain.value = 0.25;
+    o.connect(g); g.connect(ac.destination);
+    o.start(); o.stop(ac.currentTime + 0.6);
+  } catch (e) {}
+}
+function toast(m, bad) {
+  const t = document.getElementById('toast');
+  t.textContent = m;
+  t.style.background = bad ? '#3a1414' : '#12351f';
+  t.hidden = false;
+  setTimeout(() => t.hidden = true, 3000);
+}
+function showKey(msg) {
+  document.getElementById('key-msg').textContent = msg || '';
+  const m = document.getElementById('modal-key');
+  if (m.hidden) { m.hidden = false; document.getElementById('key-input').focus(); }
+}
+async function api(path, body) {
+  const opt = { method: body ? 'POST' : 'GET', headers: { 'X-Panel-Key': PK } };
+  if (body) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
+  const r = await fetch(path, opt);
+  if (r.status === 401) { showKey('Clave incorrecta o no ingresada.'); return { ok: false, error: 'sin clave de panel' }; }
+  return r.json().catch(() => ({}));
+}
+document.getElementById('key-go').onclick = () => {
+  PK = document.getElementById('key-input').value.trim();
+  localStorage.setItem(PK_KEY, PK);
+  document.getElementById('modal-key').hidden = true;
+  refresh();
+};
+document.getElementById('key-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('key-go').click();
+});
+async function init() {
+  let req = false;
+  try { req = !!(await (await fetch('/api/config')).json()).require_keys; } catch (e) {}
+  if (req && !PK) showKey('Escribe la clave de panel para entrar.');
+  refresh();
+}
+
+function orderCard(o) {
+  const div = document.createElement('div');
+  div.className = 'card';
+  div.style.marginBottom = '10px';
+  div.innerHTML = `
+    <div class="row"><b style="flex:1">${o.cabin_name} · #${o.id}</b>
+      <span class="mut small">${hhmm(o.created_at)}</span></div>
+    <p class="small" style="margin:6px 0">${o.items.map(i =>
+      i.qty + '× ' + i.name).join('<br>')}</p>
+    <div class="row"><span class="chip">${fmt$(o.total)}</span>
+      ${NEXT[o.status] ? `<button class="btn ok" data-id="${o.id}"
+        data-next="${NEXT[o.status]}">${NEXT_LABEL[o.status]}</button>` : ''}
+      <button class="btn bad" data-id="${o.id}" data-cancel="1">✖</button></div>`;
+  return div;
+}
+
+async function refresh() {
+  const j = await api('/api/orders');
+  if (!j || !j.ok) return;
+  const active = j.orders.filter(o => ['nuevo', 'preparando', 'listo'].includes(o.status));
+  const entregados = j.orders.filter(o => o.status === 'entregado');
+  const nuevos = active.filter(o => o.status === 'nuevo');
+  if (prevNuevos !== null && nuevos.length > prevNuevos) beep();
+  prevNuevos = nuevos.length;
+  document.getElementById('count').textContent = 'pedidos: ' + active.length;
+  for (const st of ['nuevo', 'preparando', 'listo']) {
+    const col = document.getElementById('col-' + st);
+    col.innerHTML = '';
+    const list = active.filter(o => o.status === st);
+    document.getElementById('c-' + st).textContent = list.length;
+    if (!list.length) col.innerHTML = '<p class="mut small">—</p>';
+    list.forEach(o => col.appendChild(orderCard(o)));
+  }
+  const ent = document.getElementById('entregados');
+  ent.innerHTML = entregados.length ? entregados.map(o =>
+    `<span class="chip">${o.cabin_name} #${o.id} ${fmt$(o.total)} ${hhmm(o.created_at)}</span>`
+  ).join('') : '<span class="mut small">—</span>';
+}
+
+document.querySelector('main').addEventListener('click', async ev => {
+  const next = ev.target.closest('button[data-next]');
+  const cancel = ev.target.closest('button[data-cancel]');
+  if (next) {
+    await api('/api/orders/status', { order_id: +next.dataset.id, status: next.dataset.next });
+    refresh();
+  }
+  if (cancel) {
+    if (!confirm('¿Cancelar el pedido #' + cancel.dataset.id + '?')) return;
+    await api('/api/orders/status', { order_id: +cancel.dataset.id, status: 'cancelado' });
+    toast('Pedido cancelado', true);
+    refresh();
+  }
+});
+
+init();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

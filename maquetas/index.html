@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Maquetas — Sistema de Moteles</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div style="background:linear-gradient(90deg,#7c2d12,#b45309);color:#fff;padding:7px 14px;font-size:13px;text-align:center;position:sticky;top:0;z-index:99">
+🖼️ <b>MAQUETAS</b> — pantallas de ejemplo con datos ficticios. No están conectadas a la base real.
+</div>
+<header>
+  <h1>🖼️ Sistema de Moteles — cómo se ve en pleno funcionamiento</h1>
+</header>
+<main>
+  <p class="mut">Escenario de ejemplo: <b>"Motel Los Robles"</b>, un sábado 23:05 con
+  <b>5 cabañas ocupadas</b>, pedidos en cocina y cobros del día. Haz clic en cada
+  pantalla: todas funcionan de verdad (con datos simulados).</p>
+
+  <div class="grid">
+    <div class="card">
+      <h3>🛎️ Recepción</h3>
+      <p class="mut small">Mostrador: cabañas libres/ocupadas, tiempos restantes,
+      totales por cabaña, registrar ingreso con ticket QR y cobrar salida.</p>
+      <a class="btn acc" href="recepcion.html">Ver recepción</a>
+    </div>
+    <div class="card">
+      <h3>📷 Escáner de puerta</h3>
+      <p class="mut small">El teléfono montado en la puerta de la cabaña. Prueba un
+      código válido (ej. <code>MTL1-ABC123</code> o 6 caracteres) y uno inválido.</p>
+      <a class="btn acc" href="escaner.html">Ver escáner</a>
+    </div>
+    <div class="card">
+      <h3>🍽️ Catálogo de la cabaña</h3>
+      <p class="mut small">El teléfono interior: el cliente pide alimentos y
+      bebidas a la cocina y puede abrir la puerta para salir (5 s).</p>
+      <a class="btn acc" href="cabana.html">Ver catálogo</a>
+    </div>
+    <div class="card">
+      <h3>👨‍🍳 Cocina</h3>
+      <p class="mut small">Cola de pedidos por estado. Los botones mueven los
+      pedidos de columna (nuevo → preparando → listo → entregado).</p>
+      <a class="btn acc" href="cocina.html">Ver cocina</a>
+    </div>
+    <div class="card">
+      <h3>📊 Panel de ocupación</h3>
+      <p class="mut small">Vista en vivo: ocupación, transcurrido/restante,
+      cargos, estado de cada NodeMCU y bitácora de eventos.</p>
+      <a class="btn acc" href="panel.html">Ver panel</a>
+    </div>
+    <div class="card">
+      <h3>💰 Ingresos</h3>
+      <p class="mut small">Cobrado hoy y este mes, gráfico de 14 días, estadías
+      en curso e historial de cobros (con descarga Excel en el sistema real).</p>
+      <a class="btn acc" href="ingresos.html">Ver ingresos</a>
+    </div>
+  </div>
+
+  <p class="mut small" style="margin-top:18px">
+    Nota: en estas maquetas las acciones (registrar ingreso, cobrar, abrir puerta,
+    avanzar pedidos) muestran respuestas simuladas. En el sistema real operan
+    contra la base de datos y las placas NodeMCU.
+  </p>
+</main>
+</body>
+</html>

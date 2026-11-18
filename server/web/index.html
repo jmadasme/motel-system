@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sistema Moteles</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header><h1>🏩 Sistema de Moteles — acceso rápido</h1></header>
+<main>
+  <div class="grid">
+    <div class="card">
+      <h3>🛎️ Recepción / mostrador</h3>
+      <p class="mut small">Registrar ingreso del vehículo, imprimir ticket QR,
+      abrir barrera, cobrar salida.</p>
+      <a class="btn acc" href="/recepcion">Abrir recepción</a>
+    </div>
+    <div class="card">
+      <h3>📷 Escáner de puerta</h3>
+      <p class="mut small">Teléfono montado en cada cabaña: lee el QR del cliente
+      y pide la apertura al servidor. Se abre con la clave de la cabaña
+      (<code>/scan?cab=1&amp;k=CLAVE</code>).</p>
+      <div class="row" style="margin-top:12px">
+        <select id="scan-cab" data-cab aria-label="Cabaña del escáner"></select>
+        <a class="btn acc" id="scan-open" href="/scan?cab=1">Abrir escáner</a>
+      </div>
+    </div>
+    <div class="card">
+      <h3>📱 Catálogo de la cabaña</h3>
+      <p class="mut small">Teléfono interior: pedir alimentos y bebidas a la
+      cocina (<code>/cabana?cab=1&amp;k=CLAVE</code>).</p>
+      <div class="row" style="margin-top:12px">
+        <select id="cabana-cab" data-cab aria-label="Cabaña del catálogo"></select>
+        <a class="btn acc" id="cabana-open" href="/cabana?cab=1">Abrir catálogo</a>
+      </div>
+    </div>
+    <div class="card">
+      <h3>💰 Ingresos</h3>
+      <p class="mut small">Cobrado hoy y este mes, historial de salidas y lo que
+      se cobrará al salir de cada cabaña ocupada.</p>
+      <a class="btn acc" href="/ingresos">Abrir ingresos</a>
+    </div>
+    <div class="card">
+      <h3>👨‍🍳 Cocina</h3>
+      <p class="mut small">Cola de pedidos por estado: nuevo → preparando →
+      listo → entregado.</p>
+      <a class="btn" href="/kitchen">Abrir cocina</a>
+    </div>
+    <div class="card">
+      <h3>📊 Panel de ocupación</h3>
+      <p class="mut small">Todas las cabañas con tiempo transcurrido, cargos por
+      servicios y estado de dispositivos.</p>
+      <a class="btn" href="/dashboard">Abrir panel</a>
+    </div>
+    <div class="card">
+      <h3>👥 Personal del motel</h3>
+      <p class="mut small">Códigos QR de limpieza, mantenimiento y
+      administración. Abren cualquier cabaña en cualquier momento y cada uso
+      queda registrado.</p>
+      <a class="btn" href="/staff">Abrir personal</a>
+    </div>
+  </div>
+  <p class="mut small" style="margin-top:18px">
+    Las claves de cabaña (<code>k</code>) se generan al sembrar la base y se
+    pueden consultar en el panel. La clave del panel está en
+    <code>config.json</code> → <code>panel_key</code>.
+  </p>
+</main>
+<script>
+(async () => {
+  let cabins = [];
+  try {
+    const r = await fetch('/api/cabins');
+    const data = await r.json();
+    cabins = data.cabins || [];
+  } catch (e) {}
+  if (!cabins.length) cabins = [{ id: 1, name: 'Cabaña 1' }];
+
+  for (const sel of document.querySelectorAll('select[data-cab]')) {
+    for (const c of cabins) {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.name;
+      sel.appendChild(opt);
+    }
+  }
+
+  const scanSel = document.getElementById('scan-cab');
+  const cabSel = document.getElementById('cabana-cab');
+  const scanOpen = document.getElementById('scan-open');
+  const cabOpen = document.getElementById('cabana-open');
+  function upd() {
+    scanOpen.href = '/scan?cab=' + encodeURIComponent(scanSel.value);
+    cabOpen.href = '/cabana?cab=' + encodeURIComponent(cabSel.value);
+  }
+  scanSel.addEventListener('change', upd);
+  cabSel.addEventListener('change', upd);
+  upd();
+})();
+</script>
+</body>
+</html>

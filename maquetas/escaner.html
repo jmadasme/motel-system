@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lector de puerta — Sistema Moteles</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div style="background:linear-gradient(90deg,#7c2d12,#b45309);color:#fff;padding:7px 14px;font-size:13px;text-align:center;position:sticky;top:0;z-index:99">
+🖼️ <b>MAQUETA</b> — pantalla de ejemplo con datos ficticios de "Motel Los Robles" (23:05, plena operación). No está conectada a la base real.
+</div>
+<script src="mock.js"></script>
+<header>
+  <h1>📷 Lector de puerta</h1>
+  <span class="chip" id="cabname">cabina –</span>
+</header>
+<main>
+  <div class="card" id="err" hidden></div>
+
+  <div class="card">
+    <video id="video" autoplay playsinline muted></video>
+    <div class="row" style="margin-top:12px">
+      <button class="btn acc bigbtn" id="start">▶️ Encender cámara</button>
+      <span class="mut small" id="hint">También puedes escribir el código manual.</span>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <input type="text" id="manual" placeholder="MTL1-xxxxxxxx o código de 6 letras"
+             style="flex:1" autocomplete="off">
+      <button class="btn ok bigbtn" id="send">Validar</button>
+    </div>
+  </div>
+</main>
+
+<div id="overlay" hidden></div>
+<div class="toast" id="toast" hidden></div>
+
+<script src="vendor/jsQR.js"></script>
+<script>
+const P = new URLSearchParams(location.search);
+const CAB = +(P.get('cab') || 0);
+const K = P.get('k') || '';
+let video, canvas, ctx, cooldown = false, lastCode = null, lastTs = 0;
+let camOn = false, lastDecode = 0;
+
+function fatal(msg) {
+  const e = document.getElementById('err');
+  e.hidden = false;
+  e.innerHTML = '<b>No se puede usar el lector.</b><br>' + msg;
+  document.getElementById('start').disabled = true;
+}
+if (!CAB) fatal('Falta <code>?cab=N</code> en la URL.');
+document.getElementById('cabname').textContent = CAB ? 'cabina ' + CAB : 'cabina –';
+
+function beep(okFreq) {
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'sine';
+    o.frequency.value = okFreq ? 880 : 220;
+    g.gain.value = 0.3;
+    o.connect(g); g.connect(ac.destination);
+    o.start(); o.stop(ac.currentTime + 0.4);
+  } catch (e) {}
+}
+
+function showResult(res) {
+  const ov = document.getElementById('overlay');
+  if (res.ok) {
+    ov.className = 'ok';
+    ov.innerHTML = `<div style="font-size:36px">✅ ACCESO PERMITIDO</div>
+      <div style="font-size:22px">${res.cabin}</div>
+      <div>válido hasta ${(res.valid_until || '').slice(11, 16)}
+      · entrada n.º ${res.entries}</div>
+      <div class="small" style="opacity:.75">${(res.unlock && res.unlock.detail) || ''}</div>`;
+    beep(true);
+    if (navigator.vibrate) navigator.vibrate([80, 60, 80]);
+  } else {
+    ov.className = 'bad';
+    ov.innerHTML = `<div style="font-size:30px">⛔ ACCESO DENEGADO</div>
+      <div style="font-size:18px">${res.reason || res.error || 'error'}</div>`;
+    beep(false);
+    if (navigator.vibrate) navigator.vibrate(300);
+  }
+  ov.hidden = false;
+}
+
+async function handle(code) {
+  if (cooldown || !CAB) return;
+  const now = Date.now();
+  if (code === lastCode && now - lastTs < 9000) return;
+  lastCode = code; lastTs = now;
+  cooldown = true;
+  let res;
+  try {
+    const r = await fetch('/api/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cab: CAB, k: K, code }),
+    });
+    res = await r.json();
+  } catch (e) {
+    res = { ok: false, reason: 'sin conexión con el servidor' };
+  }
+  showResult(res);
+  setTimeout(() => {
+    document.getElementById('overlay').hidden = true;
+    cooldown = false;
+  }, 4500);
+}
+
+/* ---------------- cámara ---------------- */
+document.getElementById('start').onclick = async () => {
+  if (camOn) return;
+  const btn = document.getElementById('start');
+  btn.disabled = true;
+  try {
+    video = document.getElementById('video');
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment' }, audio: false });
+    video.srcObject = stream;
+    await video.play();
+    canvas = document.createElement('canvas');
+    ctx = canvas.getContext('2d', { willReadFrequently: true });
+    camOn = true;
+    btn.textContent = '🟢 Cámara activa';
+    document.getElementById('hint').textContent =
+      'Muestra el QR del ticket frente a la cámara.';
+    requestAnimationFrame(tick);
+  } catch (e) {
+    btn.disabled = false;
+    fatal('La cámara no está disponible (' + e.message + ').<br>' +
+      'En HTTPS debe aceptar el certificado; también puede usar el código manual.');
+  }
+};
+
+function tick(ts) {
+  if (!camOn) return;
+  if (!cooldown && video.readyState === 4 && video.videoWidth &&
+      ts - lastDecode > 220 && typeof jsQR !== 'undefined') {
+    lastDecode = ts;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    ctx.drawImage(video, 0, 0);
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const qr = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+    if (qr && qr.data) handle(qr.data.trim());
+  }
+  requestAnimationFrame(tick);
+}
+
+/* ---------------- manual ---------------- */
+document.getElementById('send').onclick = () => {
+  const v = document.getElementById('manual').value.trim();
+  if (v) handle(v);
+};
+document.getElementById('manual').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('send').click();
+});
+</script>
+</body>
+</html>

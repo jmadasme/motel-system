@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Panel de ocupación — Sistema Moteles</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1 id="motel">📊 Panel</h1>
+  <button class="btn warn" id="gate">🚧 Abrir barrera</button>
+  <a class="btn acc" href="/ingresos">💰 Ingresos</a>
+  <a class="btn" href="/recepcion">🛎️ Recepción</a>
+  <a class="btn" href="/staff">👥 Personal</a>
+  <a class="btn" href="/kitchen">🍳 Cocina</a>
+</header>
+<main>
+  <div class="row" style="margin-bottom:14px">
+    <div class="stat"><span class="mut small">Libres</span><b id="s-libres">–</b></div>
+    <div class="stat"><span class="mut small">Ocupadas</span><b id="s-ocupadas">–</b></div>
+    <div class="stat"><span class="mut small">En curso</span><b id="s-recaud">–</b></div>
+    <div class="stat"><span class="mut small">Pedidos pendientes</span><b id="s-pedidos">–</b></div>
+    <div class="stat"><span class="mut small">Ingresos hoy</span><b id="s-hoy">–</b></div>
+    <div class="stat"><span class="mut small">Impresora</span><b id="s-print" style="font-size:15px">–</b></div>
+  </div>
+
+  <div class="card" style="overflow:auto">
+    <h3>Cabinas</h3>
+    <table>
+      <thead><tr><th>Cabana</th><th>Estado</th><th>Desde</th><th>Transcurrido</th>
+      <th>Restante</th><th>Base</th><th>Servicios</th><th>Total</th><th>Acciones</th></tr></thead>
+      <tbody id="tb-cabins"></tbody>
+    </table>
+  </div>
+
+  <div class="grid" style="margin-top:14px">
+    <div class="card">
+      <h3>Dispositivos (NodeMCU / barrera)</h3>
+      <table>
+        <thead><tr><th>ID</th><th>Rol</th><th>Dirección</th><th>Estado</th><th>Ultima vez</th></tr></thead>
+        <tbody id="tb-devices"></tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3>Eventos recientes</h3>
+      <div class="events" id="events"></div>
+    </div>
+  </div>
+
+  <details class="card" style="margin-top:14px">
+    <summary style="cursor:pointer"><b>Provisionar teléfonos por cabaña (URLs con clave)</b></summary>
+    <div id="prov"></div>
+  </details>
+</main>
+<div class="modal" id="modal-key" hidden>
+  <div class="box">
+    <h3>🔐 Acceso del personal</h3>
+    <p class="mut small">Clave de panel configurada en <code>config.json</code> →
+      <code>panel_key</code>. Por defecto: <b>CAMBIAR-CLAVE-PANEL</b></p>
+    <p class="small" id="key-msg" style="color:var(--warn)"></p>
+    <input type="password" id="key-input" placeholder="Clave de panel" autocomplete="current-password">
+    <div class="row" style="justify-content:flex-end;margin-top:12px">
+      <button class="btn acc" id="key-go">Entrar</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const PK_KEY = 'motel_panel_key';
+let PK = localStorage.getItem(PK_KEY) || '';
+let state = null;
+const fmt$ = v => '$ ' + Math.round(v).toLocaleString('es-CL');
+const hhmm = s => (s || '').slice(11, 16);
+function minsLeft(n) {
+  if (n < 0) return 'vencido ' + Math.abs(n) + 'm';
+  const h = Math.floor(n / 60), m = n % 60;
+  return (h ? h + 'h ' : '') + m + 'm';
+}
+function toast(m, bad) {
+  const t = document.getElementById('toast');
+  t.textContent = m;
+  t.style.background = bad ? '#3a1414' : '#12351f';
+  t.hidden = false;
+  setTimeout(() => t.hidden = true, 3500);
+}
+function showKey(msg) {
+  document.getElementById('key-msg').textContent = msg || '';
+  const m = document.getElementById('modal-key');
+  if (m.hidden) { m.hidden = false; document.getElementById('key-input').focus(); }
+}
+async function api(path, body) {
+  const opt = { method: body ? 'POST' : 'GET', headers: { 'X-Panel-Key': PK } };
+  if (body) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
+  const r = await fetch(path, opt);
+  if (r.status === 401) { showKey('Clave incorrecta o no ingresada.'); return { ok: false, error: 'sin clave de panel' }; }
+  return r.json().catch(() => ({}));
+}
+document.getElementById('key-go').onclick = () => {
+  PK = document.getElementById('key-input').value.trim();
+  localStorage.setItem(PK_KEY, PK);
+  document.getElementById('modal-key').hidden = true;
+  refresh();
+};
+document.getElementById('key-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('key-go').click();
+});
+async function init() {
+  let req = false;
+  try { req = !!(await (await fetch('/api/config')).json()).require_keys; } catch (e) {}
+  if (req && !PK) showKey('Escribe la clave de panel para entrar.');
+  refresh();
+}
+
+const ICONS = { checkin: '🟢', checkout: '🔵', scan_ok: '✅', scan_denegado: '⛔',
+  puerta: '🔓', barrera: '🚧', pedido: '🍽️', pedido_estado: '📦',
+  salida: '🚪', reimpresion: '🖨️' };
+
+function render() {
+  if (!state || !state.ok) return;
+  document.getElementById('motel').textContent = '📊 ' + state.motel + ' — Panel';
+  document.getElementById('s-libres').textContent = state.totals.libres;
+  document.getElementById('s-ocupadas').textContent = state.totals.ocupadas;
+  document.getElementById('s-recaud').textContent = fmt$(state.totals.recaudacion);
+  document.getElementById('s-pedidos').textContent = state.totals.pedidos_pendientes;
+  document.getElementById('s-print').textContent = state.printer_mode;
+
+  const tb = document.getElementById('tb-cabins');
+  tb.innerHTML = '';
+  for (const c of state.cabins) {
+    const t = c.ticket;
+    const tr = document.createElement('tr');
+    tr.innerHTML = c.state === 'ocupada' && t ? `
+      <td><b>${c.name}</b></td>
+      <td><span class="badge ocupada">ocupada</span></td>
+      <td>${hhmm(t.issued_at)}</td>
+      <td>${minsLeft(-c.elapsed_min).replace('vencido ', '')}</td>
+      <td>${minsLeft(c.remaining_min)}</td>
+      <td>${fmt$(t.price)}</td>
+      <td>${fmt$(c.charges)}</td>
+      <td><b>${fmt$(c.total)}</b></td>
+      <td><div class="row">
+        <button class="btn acc" data-act="open" data-id="${c.id}">🔓</button>
+        <button class="btn" data-act="reprint" data-id="${c.id}">🖨️</button>
+        <button class="btn warn" data-act="checkout" data-id="${c.id}">💵</button>
+      </div></td>` : `
+      <td><b>${c.name}</b></td>
+      <td><span class="badge libre">libre</span></td>
+      <td colspan="6" class="mut small">disponible · 3h ${fmt$(c.prices['180'])}</td>
+      <td></td>`;
+    tb.appendChild(tr);
+  }
+
+  const dv = document.getElementById('tb-devices');
+  dv.innerHTML = '';
+  for (const d of state.devices) {
+    const rol = d.kind === 'gate' ? 'barrera' :
+      ('cabana ' + state.cabins.find(c => c.id === d.cabin_id)?.name || '');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${d.id}</td><td>${rol}</td>
+      <td class="small">${d.ip}:${d.port}</td>
+      <td>${d.online ? '🟢' : '🔴'} ${d.status}</td>
+      <td class="small">${d.last_seen ? hhmm(d.last_seen) : '–'}</td>`;
+    if (d.ip === 'virtual') tr.style.opacity = '.75';
+    dv.appendChild(tr);
+  }
+
+  const evs = document.getElementById('events');
+  evs.innerHTML = state.events.map(e => {
+    const icon = ICONS[e.kind] || (e.kind.startsWith('dispositivo:') ? '🔘' : '•');
+    const cab = e.cabin_name ? '[' + e.cabin_name + '] ' : '';
+    return `<div class="event">${icon} <span class="mut small">${hhmm(e.ts)}</span>
+      <b>${e.kind}</b> ${cab}${e.detail || ''}</div>`;
+  }).join('');
+
+  const prov = document.getElementById('prov');
+  const origin = location.origin;
+  prov.innerHTML = state.cabins.map(c => `
+    <div class="row small" style="padding:6px 0;border-bottom:1px solid #1d2532">
+      <b style="min-width:70px">${c.name}</b>
+      <span>Escáner: <code>${origin}/scan?cab=${c.id}&k=${c.scanner_key}</code></span>
+      <span>· Catálogo: <code>${origin}/cabana?cab=${c.id}&k=${c.scanner_key}</code></span>
+    </div>`).join('');
+}
+
+document.getElementById('tb-cabins').addEventListener('click', async ev => {
+  const btn = ev.target.closest('button[data-act]');
+  if (!btn) return;
+  const id = +btn.dataset.id;
+  const cabin = state.cabins.find(c => c.id === id);
+  if (btn.dataset.act === 'open') {
+    const r = await api('/api/panel/open', { cabin_id: id });
+    toast(r.ok ? 'Puerta: ' + (r.unlock.detail || '') : 'Error', !r.ok);
+  }
+  if (btn.dataset.act === 'reprint') {
+    const r = await api('/api/reprint', { cabin_id: id });
+    toast(r.ok ? 'Ticket reenviado (' + (r.print.detail || '') + ')' : 'Error: ' + r.error, !r.ok);
+  }
+  if (btn.dataset.act === 'checkout') {
+    if (!confirm('Cobrar y liberar ' + cabin.name + '?\nTotal: ' + fmt$(cabin.total))) return;
+    const r = await api('/api/checkout', { cabin_id: id });
+    toast(r.ok ? 'Cobrado ' + fmt$(r.total) : 'Error: ' + r.error, !r.ok);
+    refresh();
+  }
+});
+
+document.getElementById('gate').onclick = async () => {
+  const r = await api('/api/gate/open', {});
+  toast(r.ok ? 'Barrera: ' + (r.unlock.detail || '') : 'Error', !r.ok);
+};
+
+async function refresh() {
+  state = await api('/api/state');
+  render();
+  const rev = await api('/api/revenue');
+  if (rev && rev.ok) document.getElementById('s-hoy').textContent = fmt$(rev.hoy.total);
+}
+init();
+setInterval(refresh, 2500);
+</script>
+</body>
+</html>

@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ingresos — Sistema Moteles</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1 id="title">💰 Ingresos</h1>
+  <span class="chip" id="ts">–</span>
+  <a class="btn" href="/recepcion">🛎️ Recepción</a>
+  <a class="btn" href="/dashboard">📊 Panel</a>
+</header>
+<main>
+  <div class="row" style="margin-bottom:14px">
+    <div class="stat"><span class="mut small">Hoy (cobrado)</span>
+      <b id="h-total">–</b><span class="small mut" id="h-sub"></span></div>
+    <div class="stat"><span class="mut small">Este mes (cobrado)</span>
+      <b id="m-total">–</b><span class="small mut" id="m-sub"></span></div>
+    <div class="stat"><span class="mut small">En curso ahora</span>
+      <b id="c-total">–</b><span class="small mut" id="c-sub"></span></div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <h3 style="margin:0">Cobrado por día <span class="chip">últimos 14 días</span></h3>
+      <a class="btn ok" id="dl" href="/api/revenue/export.xlsx">⬇️ Descargar Excel (.xlsx)</a>
+    </div>
+    <div id="chart" style="display:flex;align-items:flex-end;gap:6px;height:190px;margin-top:14px"></div>
+  </div>
+
+  <div class="card" style="overflow:auto">
+    <h3>Estadías en curso <span class="chip">lo que se cobrará al salir</span></h3>
+    <table>
+      <thead><tr><th>Cabana</th><th>Entrada</th><th>Valido hasta</th><th>Tiempo</th>
+        <th>Base</th><th>Servicios</th><th>Total actual</th></tr></thead>
+      <tbody id="tb-curso"></tbody>
+    </table>
+  </div>
+
+  <div class="card" style="overflow:auto;margin-top:14px">
+    <h3>Historial de cobros <span class="chip">últimas 60 salidas</span></h3>
+    <table>
+      <thead><tr><th>#</th><th>Cabana</th><th>Entrada</th><th>Salida</th><th>Tiempo</th>
+        <th>Base</th><th>Servicios</th><th>Total cobrado</th></tr></thead>
+      <tbody id="tb-hist"></tbody>
+    </table>
+  </div>
+</main>
+
+<div class="modal" id="modal-key" hidden>
+  <div class="box">
+    <h3>🔐 Acceso del personal</h3>
+    <p class="mut small">Clave de panel configurada en <code>config.json</code> →
+      <code>panel_key</code>. Por defecto: <b>CAMBIAR-CLAVE-PANEL</b></p>
+    <p class="small" id="key-msg" style="color:var(--warn)"></p>
+    <input type="password" id="key-input" placeholder="Clave de panel" autocomplete="current-password">
+    <div class="row" style="justify-content:flex-end;margin-top:12px">
+      <button class="btn acc" id="key-go">Entrar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const PK_KEY = 'motel_panel_key';
+let PK = localStorage.getItem(PK_KEY) || '';
+const fmt$ = v => '$ ' + Math.round(v).toLocaleString('es-CL');
+const hhmm = s => (s || '').slice(11, 16);
+function durLabel(m) {
+  const h = Math.floor(m / 60), r = m % 60;
+  return (h ? h + 'h' : '') + (r ? ' ' + r + 'm' : '');
+}
+function showKey(msg) {
+  document.getElementById('key-msg').textContent = msg || '';
+  const m = document.getElementById('modal-key');
+  if (m.hidden) { m.hidden = false; document.getElementById('key-input').focus(); }
+}
+async function api(path) {
+  const r = await fetch(path, { headers: { 'X-Panel-Key': PK } });
+  if (r.status === 401) { showKey('Clave incorrecta o no ingresada.'); return { ok: false }; }
+  return r.json().catch(() => ({}));
+}
+document.getElementById('key-go').onclick = () => {
+  PK = document.getElementById('key-input').value.trim();
+  localStorage.setItem(PK_KEY, PK);
+  document.getElementById('modal-key').hidden = true;
+  refresh();
+};
+document.getElementById('key-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('key-go').click();
+});
+
+function renderChart(porDia) {
+  const cont = document.getElementById('chart');
+  const max = Math.max(...porDia.map(d => d.total), 1);
+  cont.innerHTML = porDia.map(d => {
+    const h = Math.max(Math.round(100 * d.total / max), 3);
+    const dd = d.dia.slice(8, 10) + '/' + d.dia.slice(5, 7);
+    const tag = d.total ? (Math.round(d.total / 1000) + 'k') : '';
+    return `<div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;
+      align-items:center;gap:4px;height:100%">
+      <span class="mut" style="font-size:10.5px">${tag}</span>
+      <div title="${dd}: ${fmt$(d.total)} · ${d.n} salida(s)"
+        style="width:100%;height:${h}%;background:linear-gradient(180deg,#3b82f6,#1e4d8a);
+        border-radius:6px 6px 2px 2px;min-height:4px"></div>
+      <span class="mut" style="font-size:10.5px">${dd}</span></div>`;
+  }).join('');
+}
+
+function render(r) {
+  document.getElementById('ts').textContent = 'act. ' + hhmm(r.ts || new Date().toISOString());
+  document.getElementById('h-total').textContent = fmt$(r.hoy.total);
+  document.getElementById('h-sub').textContent =
+    r.hoy.n + ' salidas · base ' + fmt$(r.hoy.base) + ' · servicios ' + fmt$(r.hoy.services);
+  document.getElementById('m-total').textContent = fmt$(r.mes.total);
+  document.getElementById('m-sub').textContent =
+    r.mes.n + ' salidas · base ' + fmt$(r.mes.base) + ' · servicios ' + fmt$(r.mes.services);
+  document.getElementById('c-total').textContent = fmt$(r.en_curso_total);
+  document.getElementById('c-sub').textContent = r.en_curso.length + ' cabanas ocupadas';
+  renderChart(r.por_dia || []);
+
+  const cur = document.getElementById('tb-curso');
+  cur.innerHTML = r.en_curso.length ? '' : '<tr><td colspan="7" class="mut small">—</td></tr>';
+  for (const t of r.en_curso) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><b>${t.cabin_name}</b></td><td>${hhmm(t.issued_at)}</td>
+      <td>${hhmm(t.valid_until)}</td><td>${durLabel(t.duration_min)}</td>
+      <td>${fmt$(t.price)}</td><td>${fmt$(t.services)}</td>
+      <td><b>${fmt$(t.total_now)}</b></td>`;
+    cur.appendChild(tr);
+  }
+
+  const hist = document.getElementById('tb-hist');
+  hist.innerHTML = r.historial.length ? '' : '<tr><td colspan="8" class="mut small">—</td></tr>';
+  for (const t of r.historial) {
+    const serv = (t.total_charged || 0) - t.price;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>#${t.id}</td><td>${t.cabin_name}</td>
+      <td>${hhmm(t.issued_at)}</td><td>${hhmm(t.closed_at)}</td>
+      <td>${durLabel(t.duration_min)}</td>
+      <td>${fmt$(t.price)}</td><td>${fmt$(serv)}</td>
+      <td><b>${fmt$(t.total_charged)}</b></td>`;
+    hist.appendChild(tr);
+  }
+}
+
+async function refresh() {
+  const r = await api('/api/revenue');
+  if (r && r.ok) { r.ts = new Date().toISOString(); render(r); }
+}
+
+async function init() {
+  let req = false;
+  try { req = !!(await (await fetch('/api/config')).json()).require_keys; } catch (e) {}
+  if (req && !PK) showKey('Escribe la clave de panel para entrar.');
+  if (PK) document.getElementById('dl').href =
+    '/api/revenue/export.xlsx?k=' + encodeURIComponent(PK);
+  refresh();
+}
+init();
+setInterval(refresh, 4000);
+</script>
+</body>
+</html>
